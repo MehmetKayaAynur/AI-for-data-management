@@ -1,173 +1,200 @@
-# AI for Data Management — MaintNet Bakım Logu Dijitalleştirme
+# AI for Data Management — Digitizing Free-Text Maintenance Logs
 
-Fabrikalardaki **düzensiz, serbest-metin bakım loglarını** AI yardımıyla temizleyip
-yapılandırılmış, sorgulanabilir bir veritabanına aktaran uçtan uca bir hat.
+An end-to-end pipeline that turns **messy, free-text maintenance logs** into a **clean,
+structured, queryable database** using a small **Large Language Model (LLM) running
+locally at zero cost**.
 
-> Akademik çerçeve: *Intelligent automation for organizing, cleaning, and securing
-> corporate databases.* Anomaly detection değil — **veri dijitalleştirme ve düzenleme**.
+> Academic framing: *intelligent automation for **organizing**, **cleaning** and
+> **securing** corporate data.* The focus is **data digitization and organization** —
+> not anomaly or failure prediction.
 
-**Kaynak:** MaintNet (akademik açık kaynak dataset)
-- Paper: https://arxiv.org/abs/2005.12443
-- Veri barınağı: https://people.rit.edu/fa3019/MaintNet/  (indirme: `autonlab/pmx_data` reposu)
+**Data source:** [MaintNet](https://arxiv.org/abs/2005.12443) — an open-access
+maintenance-language dataset (aviation, automotive and facility domains).
 
 ---
 
-## Klasör Yapısı
+## What it does
+
+Technicians record every repair as a short free-text note, dense with abbreviations,
+typos, inconsistent dates and missing fields — so the logs cannot be searched or
+analysed. This project ingests **6,569 real records from 3 heterogeneous domains**,
+cleans them, structures each note into explicit fields with an LLM, masks personal data,
+and loads everything into SQLite. On top of the clean data it provides an interactive
+dashboard and a retrieval-augmented maintenance assistant.
+
+| Raw note | → | Clean structured record |
+|----------|---|--------------------------|
+| `"#2 intake gasket leaking; rplcd r/h engine"` | → | `asset=gasket · failure_mode=leak · action_type=replace · quality=0.75` |
+
+---
+
+## Repository layout
 
 ```
-bitirme/
-├── pipeline.py              ← Ana hat (ingest → clean → LLM structure → secure → load)
-├── compare_llm.py           ← Kural-tabanlı vs LLM kıyas hattı (+ grafik)
-├── dashboard.py             ← Streamlit interaktif veri paneli
-├── README.md                ← Bu dosya
-├── real_data/               ← GERÇEK MaintNet verisi (indirilmiş)
-│   ├── maintnet_aviation_dataset_deidentified.csv   (6169 bakım kaydı)
-│   ├── Labeled_Car_Dataset200.csv                   (200 otomotiv kaydı)
-│   ├── Facility_Maintenance200.csv                  (200 tesis kaydı)
-│   ├── *_abbriviation.csv        (3 domain — kısaltma sözlükleri)
-│   ├── grammar.csv / facilty_grammar.csv  (POS + lemma)
-│   └── domain_words2_termBank.csv / facility_domain.csv  (alan terimleri)
-└── output/
-    ├── clean_maintenance.db    ← Pipeline çıktısı (SQLite)
-    ├── clean_maintenance.csv   ← Pipeline çıktısı (CSV)
-    ├── llm_cache.json          ← LLM çıkarım önbelleği (tekrar çalıştırmalar hızlı)
-    ├── llm_vs_rule.csv/.png    ← Kıyas çıktıları
-    └── gold_template.csv       ← (ops.) elle etiketleme şablonu
+.
+├── pipeline.py        # main pipeline: ingest → clean → structure (LLM) → secure → load
+├── advisor.py         # retrieval-augmented maintenance assistant (problem → recommendation)
+├── compare_llm.py     # rule-based vs LLM comparison (coverage + agreement)
+├── evaluate.py        # accuracy vs a hand-labeled gold set (precision / recall / F1)
+├── make_gold.py       # builds the 60-record hand-labeled gold test set
+├── pii.py             # in-text PII detection & masking (NER + regex)
+├── scan_pii.py        # scans the whole corpus for PII, writes a summary
+├── dashboard.py       # Streamlit dashboard (5 tabs)
+├── requirements.txt
+└── real_data/         # MaintNet source CSVs + abbreviation / grammar / term-bank files
 ```
 
----
-
-## Pipeline Nedir, Ne Yapar
-
-`pipeline.py` 8 aşamalı bir hat. Her aşama bir veri-yönetimi sorununu çözer:
-
-| Aşama | Fonksiyon | Ne yapar |
-|-------|-----------|----------|
-| 1 | `ingest()` | 3 farklı yapıdaki CSV'yi (farklı kolon isimleri) ortak şemaya çeker |
-| 2 | `profile()` | Ham verinin "öncesi" kalite fotoğrafını çıkarır (eksik %, kısaltma %, tarih çeşitliliği) |
-| 3 | `expand_and_correct()` | Kısaltma açma (gerçek MaintNet sözlükleri) + yazım düzeltme (difflib) |
-| 4 | `normalize_date()` | Farklı tarih formatlarını ISO 8601'e çevirir |
-| 5 | `structure_record()` | Serbest metin → {asset, failure_mode, action_type} — **LLM ile** |
-| 6 | `mask_person()` | Kişi alanlarını SHA-1 hash'e çevirir (PII maskeleme) |
-| 7 | `load_to_db()` | Temiz kayıtları SQLite'a yazar + kalite skoru ekler |
-| 8 | `run()` raporu | "Sonrası" metrikler: alan çıkarım oranları, ortalama kalite skoru |
-
-### Proje başlığıyla eşleşme
-- **organizing** → ingest + structure + standardize
-- **cleaning** → expand_and_correct + normalize_date
-- **securing** → PII maskeleme + kalite skoru
+Generated artifacts (the SQLite DB, CSVs, LLM cache, charts) are written to `output/`
+and are **not** tracked in git.
 
 ---
 
-## Sözlükler — gerçek MaintNet kaynaklarından
+## The pipeline (`pipeline.py`)
 
-Çıkarım sözlükleri elle yazılmış değil, MaintNet'in kendi dil kaynaklarından **otomatik** yüklenir:
-- `ABBREV` (~127): 3 domain abbreviation CSV'sinden
-- `VOCAB` (~335): grammar + termBank dosyalarından + takviye
-- `ASSET_CANON` (~70): grammar dosyalarındaki isimlerden (POS=NN) + elle kurulmuş çok-kelimeliler
+Eight stages, each solving one data-management problem:
 
----
+| # | Function | What it does | Pillar |
+|---|----------|--------------|--------|
+| 1 | `ingest` | Map 3 heterogeneous CSVs into one common schema | Organizing |
+| 2 | `profile` | Capture the "before" quality snapshot | — |
+| 3 | `expand_and_correct` | Expand abbreviations, correct spelling | Cleaning |
+| 4 | `normalize_date` | Convert dates to ISO 8601 | Cleaning |
+| 5 | `structure_record` | Free text → `{asset, failure_mode, action_type}` via a local LLM | Organizing |
+| 6 | `mask_person` | Hash personally identifiable information | Securing |
+| 7 | `load_to_db` | Write clean records to SQLite + quality score | Securing |
+| 8 | `run` report | Capture the "after" metrics | — |
 
-## LLM Çıkarımı (yerel, ücretsiz)
+**Cleaning dictionaries are loaded automatically** from MaintNet's own resources
+(`ABBREV` ≈ 127, `VOCAB` ≈ 335, `ASSET_CANON` ≈ 70) — they are not hand-written.
 
-5. aşama (`structure_record`) artık **LLM** ile çalışır. Varsayılan backend **Ollama** (yerel, ücretsiz, API anahtarı yok):
+### Local LLM (free, no API key)
 
 ```python
 # pipeline.py
-LLM_BACKEND = "ollama"          # "ollama" (yerel) | "anthropic" (bulut, ücretli)
+LLM_BACKEND = "ollama"      # "ollama" (local) | "anthropic" (cloud, paid)
 LLM_MODEL   = "qwen2.5:3b"
 ```
 
-- Her iki backend de **JSON-şema** ile yapılandırılmış çıktı üretir (geçerli JSON garantisi).
-- **Önbellek:** Aynı metin iki kez LLM'e gönderilmez (`output/llm_cache.json`). Tekrar
-  çalıştırmalar anında, kısmi ilerleme kaybolmaz.
-- LLM hata verirse sessizce kural-tabanlı çıkarıma düşer (sağlamlık).
+Both backends produce **schema-constrained JSON** (valid output guaranteed). A persistent
+**cache** (`output/llm_cache.json`) means the same text is never sent twice, and the run
+**checkpoints every 500 records** — so a long run is resumable, and if the LLM fails on a
+record it falls back to rule-based extraction.
 
-### Ollama kurulumu (tek seferlik)
-```powershell
-winget install Ollama.Ollama        # uygulama
-pip install ollama                  # python istemcisi
-ollama pull qwen2.5:3b              # model (~2GB)
+---
+
+## Evaluation
+
+- **`compare_llm.py`** — rule-based vs LLM, measuring **coverage** (% filled) and
+  **agreement** (do the two methods produce the same value).
+- **`make_gold.py` + `evaluate.py`** — a **60-record hand-labeled gold set** (20 per
+  domain) enables true **accuracy, precision, recall and F1**, plus per-domain accuracy
+  and an error analysis of where the LLM disagrees with the ground truth.
+
+**Headline results (full corpus / gold set):**
+
+| Metric | Value |
+|--------|-------|
+| Asset / action / failure extracted | 99% / 99% / 90% |
+| Average quality score | 0.73 |
+| Asset F1 (LLM, gold set) | **0.73** (vs 0.33 rule-based) |
+| Macro-F1 (LLM vs rule-based) | **66% vs 56%** |
+
+---
+
+## Securing — in-text PII masking (`pii.py`, `scan_pii.py`)
+
+Real personal data hides inside the notes themselves. The pipeline detects **person
+names (spaCy NER, gated by trigger context for precision)**, **phone numbers and e-mails
+(regex)**, and masks them. On this corpus it finds **15 records with PII (11 names,
+7 phone numbers), all in the facility domain** — the aviation set is de-identified, so
+the detector correctly flags nothing there. Raw PII values are never stored.
+
+---
+
+## Maintenance assistant (`advisor.py`)
+
+Given a free-text problem, the assistant (1) structures it with the LLM, (2) retrieves
+similar past cases from the clean database, (3) recommends the most common action taken,
+and (4) writes short advice grounded only in those real past cases (retrieval-augmented
+generation). This would be impossible over the raw, unstructured logs.
+
+---
+
+## Dashboard (`dashboard.py`)
+
+An interactive Streamlit app with five tabs:
+
+- **Overview** — KPIs and charts over the whole dataset.
+- **Maintenance Records** — filter & free-text search; raw note beside the AI-extracted fields.
+- **Before / After** — raw messy data vs clean structured data, incl. the PII-masking panel.
+- **Assistant** — type a problem, get a recommendation.
+- **Accuracy & Evaluation** — gold-set precision/recall/F1, rule-vs-LLM comparison, per-domain accuracy and error analysis.
+
+---
+
+## Setup
+
+```bash
+pip install -r requirements.txt
+python -m spacy download en_core_web_sm     # for in-text PII / NER
+
+# Local LLM (one-time):
+#   install Ollama, then:  ollama pull qwen2.5:3b
+```
+
+Python 3.12. `sqlite3`, `difflib`, `hashlib`, `json`, `re` are from the standard library.
+For the cloud backend instead of Ollama: `pip install anthropic` + set `ANTHROPIC_API_KEY`.
+
+> Prerequisite: Ollama must be running (`ollama serve` or the app open).
+
+## Usage
+
+```bash
+# 1) Pipeline — clean, structure & load
+python pipeline.py                 # full corpus with the LLM
+python pipeline.py --limit 600     # domain-balanced sample (quick test)
+python pipeline.py --rule          # offline rule-based extraction
+
+# 2) Evaluation
+python compare_llm.py --n 80       # rule-based vs LLM (coverage + agreement)
+python make_gold.py                # build the gold test set
+python evaluate.py                 # accuracy / precision / recall / F1 vs gold
+
+# 3) Security scan
+python scan_pii.py                 # detect & summarize in-text PII
+
+# 4) Dashboard & assistant
+streamlit run dashboard.py         # http://localhost:8501
+python advisor.py "water pump leaking, low pressure"
 ```
 
 ---
 
-## Kurulum
+## Data schemas
 
-```bash
-pip install pandas ollama streamlit plotly
-# (Anthropic backend için ek: pip install anthropic + ANTHROPIC_API_KEY)
-```
+**Common schema (after `ingest`)**
 
-Python 3.12. `sqlite3`, `difflib`, `hashlib`, `json`, `re` standart kütüphane.
-
----
-
-## Çalıştırma
-
-### 1) Pipeline (temizle + yapılandır + yükle)
-```bash
-python pipeline.py                 # TÜM 6569 kaydı LLM ile işle
-python pipeline.py --limit 600     # domain-dengeli örnek (hızlı test)
-python pipeline.py --rule          # LLM yerine kural-tabanlı çıkarım
-```
-Çıktı: `output/clean_maintenance.db` + `.csv`
-
-**Checkpoint & devam etme:** Tam çalıştırma her **500 kayıtta bir** DB+CSV+cache snapshot'ı
-alır (`CHECKPOINT_EVERY`). İşlem yarıda kesilirse (Ctrl+C, kapanma) **tekrar
-`python pipeline.py` çalıştırman yeterli** — cache'deki kayıtlar anında atlanır, kaldığı
-yerden devam eder. İlk tam tur yerel modelde ~1–1.5 saat; sonraki turlar saniyeler.
-
-> Ön koşul: Ollama çalışıyor olmalı. Bağlantı hatası alırsan Ollama uygulamasını aç
-> veya `ollama serve` çalıştır.
-
-### 2) Dashboard (interaktif panel)
-```bash
-streamlit run dashboard.py
-```
-Tarayıcıda `localhost:8501`. Domain/kalite filtreleri, asset/failure/action dağılımları,
-zaman serisi, kalite histogramı, veri tablosu + CSV indirme.
-
-### 3) Kural-tabanlı vs LLM kıyası (opsiyonel rapor)
-```bash
-python compare_llm.py --n 80               # 80 kayıt kıyas
-python compare_llm.py --n 100 --domain aviation
-python compare_llm.py --make-gold 40       # gerçek accuracy için etiketleme şablonu
-```
-Coverage (kapsama) + Agreement (tam/gevşek uyum) ölçer, `output/llm_vs_rule.png` üretir.
-
----
-
-## Veri Şemaları
-
-### Ortak şema (ingest sonrası)
 ```python
 {record_id, domain, problem_raw, action_raw, date_raw, person_raw}
 ```
 
-### Temiz şema (pipeline çıktısı)
+**Clean schema (pipeline output, table `maintenance`)**
+
 ```python
-{
-  record_id, domain,
-  problem_clean,        # kısaltmalar açılmış, yazım düzeltilmiş
-  asset,                # çıkarılan ekipman/varlık
-  failure_mode,         # arıza türü kategorisi
-  action_type,          # yapılan işlem kategorisi
-  date,                 # ISO 8601 (YYYY-MM-DD)
-  person_id,            # PERSON_<sha1>  (kaynak veride kişi alanı yoksa null)
-  quality,              # 0.0–1.0 kalite skoru
-}
+{record_id, domain, asset, failure_mode, action_type,
+ date, person_id, problem_clean, quality}
 ```
 
-> Not: Aviation seti zaten deidentified gelir (tarih ve kişi alanı yoktur); otomotiv/tesis
-> setlerinde tarih vardır. Pipeline bu heterojenliği eksik-kolona dayanıklı şekilde yönetir.
+> The aviation set arrives de-identified (no dates or person field); automotive/facility
+> include dates. The pipeline handles this heterogeneity gracefully.
 
 ---
 
-## Notlar / Bilinen Sınırlar
-- **Asset over-specification:** Küçük yerel model asset'i çok özgül üretebilir
-  (`intake-gasket`); dashboard çekirdek ismi (`gasket`) gruplayarak gösterir.
-- Gerçek **accuracy** için elle etiketli gold kümesi gerekir (`compare_llm.py --make-gold`).
-  Aksi halde kıyas "kapsama + uyum" ölçer.
-- Tüm 6569 kaydın ilk LLM işlemesi yerel modelde ~1.5 saat sürer; sonraki çalıştırmalar
-  önbellekten anında gelir.
+## Notes & limitations
+
+- **Asset over-specification** — the small model finds the right component but names it
+  too finely (e.g. `2-4-rocker-cover-gasket` vs `gasket`): asset exact-match is only 25%,
+  though relaxed F1 is 0.73. Entity resolution is the planned fix.
+- On the small categorical fields (failure / action) the rule-based extractor is
+  competitive, which is why it is kept as a **hybrid fallback** rather than discarded.
+- The gold set is modest (60 records); enlarging it would tighten the confidence intervals.
