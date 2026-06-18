@@ -1,0 +1,13 @@
+# Core
+pandas
+ollama
+streamlit
+plotly
+matplotlib
+spacy
+
+# spaCy English model (for in-text PII / NER) — install with:
+#   python -m spacy download en_core_web_sm
+
+# Optional: cloud LLM backend (set LLM_BACKEND = "anthropic" in pipeline.py)
+# anthropic

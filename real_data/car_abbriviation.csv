@@ -1,0 +1,46 @@
+Abbriviation_Code,Abbreviated,Standard_Description
+1001,adj,adjust
+1002,alt,alternator
+1003,assy,assembly
+1004,bffl,baffle
+1005,cmpl,complete
+1006,cont,control
+1007,cyl,cylinder
+1008,dashpm,dash preventive maintenance
+1009,diff,differential
+1010,di,digital interface
+1011,da,driftangle
+1012,eng,engine
+1013,exht,exhaust
+1014,ext,external
+1015,fwd,forward
+1016,gsk,gasket
+1017,hd-lamp,head lamp
+1018,hyd,hydraulic
+1019,ign,ignition
+1020,inop,inoperable
+1021,ih,international harvester
+1022,inv,invoice
+1023,kn,knot
+1024,lf,left front
+1025,lh,left hand side
+1026,lwr,lower
+1027,mag,magnetos
+1028,mx,maintenance
+1029,immed,mmediately
+1030,oil-frz,oil freeze
+1031,pto,power takeoff
+1032,press,pressure
+1033,qt,quart
+1034,q,quit
+1035,res,resistance
+1036,rev,reverse
+1037,rf,right front
+1038,rh,right hand side
+1039,sn,serial number
+1040,sb,service bulletin
+1041,spnn,spinner
+1042,sys,system
+1043,thr,thrust
+1044,twg,towing
+1045,trans,transmission

@@ -1,0 +1,37 @@
+# Generated outputs / caches
+output/
+__pycache__/
+*.pyc
+
+# Presentation, report & poster deliverables (not project code)
+*.pptx
+*.ppt
+*.pdf
+latextemplate/
+deck_assets/
+build_deck.js
+build_poster.js
+create_diagram.py
+create_results.py
+capture_shots.py
+node_modules/
+package.json
+package-lock.json
+
+# Handoff / speaker notes
+CONTEXT.md
+DEMO_SCRIPT.md
+SPEECH_SCRIPT_EN.md
+
+# Provided templates
+GTU_graduate_project_presentation_template.pptx
+Poster_Format_-_2019.ppt
+
+# Editor / environment
+.claude/
+.vscode/
+.idea/
+.env
+
+# Poster image export
+AI_for_Data_Management_Poster_A1.png
